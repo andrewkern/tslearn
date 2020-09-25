@@ -1,0 +1,135 @@
+#!/usr/bin/env python
+'''
+Authors: Jeff Adrion
+'''
+
+
+from tslearn.imports import *
+from tslearn.helpers import *
+from tslearn.networks import *
+from tslearn.simulator import *
+from tslearn.treesBatchGenerator import *
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seed",dest="seed",help="random seed",type=int,default=12345)
+    parser.add_argument("--nProc",dest="nProc",help="number of cores to use (default uses all available)",type=int,default=None)
+    args = parser.parse_args()
+
+    # set seed
+    if args.seed:
+        os.environ['PYTHONHASHSEED']=str(args.seed)
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        os.environ['TF_DETERMINISTIC_OPS'] = '1'
+        os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
+    
+    # set number of cores to use
+    if not args.nProc:
+        nProc=mp.cpu_count()
+    else:
+        nProc = args.nProc
+
+    # save cli command
+    cli_cmd = sys.argv
+
+    # set cwd
+    cwd = os.getcwd()
+
+    # make directory tree
+    for subset in ("trees","results"):
+        subDir = os.path.join(cwd, subset)
+        if not os.path.exists(subDir):
+            os.mkdir(subDir)
+    treeDir = os.path.join(cwd,"trees")
+    for subset in ("train","vali","test"):
+        subDir = os.path.join(treeDir,subset)
+        if not os.path.exists(subDir):
+            os.mkdir(subDir)
+
+    
+    ##########################SIMULATE##########################
+    # define params for data generation
+    dg_params = {
+        'seed':args.seed,
+        'N': 10,
+        'Ne':10000,
+        'priorLowsRho':0.0,
+        'priorHighsRho':1e-7,
+        'priorLowsMu':1e-8,
+        'priorHighsMu':1e-7,
+        'ChromosomeLength':2e2
+              }
+    
+    # simulate training set
+    dg_train = Simulator(**dg_params)
+    direc = os.path.join(treeDir,"train")
+    dg_train.simulateAndProduceTrees(numReps=10000,direc=direc,simulator="msprime",nProc=nProc)
+    
+    # simulate validation set
+    dg_vali = Simulator(**dg_params)
+    direc = os.path.join(treeDir,"vali")
+    dg_vali.simulateAndProduceTrees(numReps=2000,direc=direc,simulator="msprime",nProc=nProc)
+    
+    # simulate test set
+    dg_test = Simulator(**dg_params)
+    direc = os.path.join(treeDir,"test")
+    dg_test.simulateAndProduceTrees(numReps=500,direc=direc,simulator="msprime",nProc=nProc)
+
+    # define batch generator params
+    train_batch_params = {
+        'treesDirectory':os.path.join(treeDir,"train"),
+        'targetNormalization':"zscore",
+        'batchSize': 64,
+        'frameWidth': 0,
+        'center':True,
+        'shuffleExamples':True
+              }
+
+    vali_batch_params = copy.deepcopy(train_batch_params)
+    vali_batch_params['treesDirectory'] = os.path.join(treeDir,"vali")
+    test_batch_params = copy.deepcopy(train_batch_params)
+    test_batch_params['treesDirectory'] = os.path.join(treeDir,"test")
+    info = pickle.load(open(os.path.join(os.path.join(treeDir,"test"),"info.p"),"rb"))
+    test_batch_params['batchSize'] = info["numReps"]
+    test_batch_params['shuffleExamples'] = False
+    
+    ## write batch params to disc
+    params = [train_batch_params, vali_batch_params, test_batch_params]
+    for i, batch in enumerate(["train","vali","test"]):
+        batchParsFILE=os.path.join(treeDir,"{}_batch_params.p".format(batch))
+        with open(batchParsFILE, "wb") as fOUT:
+            pickle.dump(params[i],fOUT)
+
+    ## initialize batch generators
+    train_batch_gen = treesBatchGenerator(**train_batch_params)
+    vali_batch_gen = treesBatchGenerator(**vali_batch_params)
+    test_batch_gen = treesBatchGenerator(**test_batch_params)
+
+    
+    ##########################TRAIN##########################
+    ## define model files
+    modelFile = os.path.join(cwd,"results","model.json")
+    weightsFile = os.path.join(cwd,"results","weights.h5")
+    resultsFile = os.path.join(cwd,"results","results.txt")
+    resultsFig = os.path.join(cwd,"results","results.pdf")
+
+    ## train model
+    train_model(ModelFuncPointer=DENSE2,
+            ModelName="DENSE2",
+            TrainGenerator=train_batch_gen,
+            ValidationGenerator=vali_batch_gen,
+            TestGenerator=test_batch_gen,
+            resultsFile=resultsFile,
+            network=[modelFile,weightsFile],
+            numEpochs=60,
+            validationSteps=20,
+            nProc=1,
+            gpuID=0)
+    
+    ## plot the results
+    plotResults(resultsFile=resultsFile,saveas=resultsFig)
+
+
+if __name__ == "__main__":
+    main()
