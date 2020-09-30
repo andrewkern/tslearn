@@ -4,124 +4,6 @@ Authors: Jeff Adrion, Jared Galloway
 
 from tslearn.imports import *
 
-
-def get_genome_coordinates(ts, dim=1):
-    """
-    Author: Jared Galloway
-    Loop through the tree sequence and
-    get all coordinates of each genome of diploid individual.
-
-    :param dim: the dimentionality, 1,2, or 3.
-    """
-
-    coordinates = []
-    for i in range(dim):
-        coordinates.append(np.zeros(ts.num_samples))
-    for ind in ts.individuals():
-        for d in range(dim):
-            for geno in range(2):
-                coordinates[d][ind.nodes[geno]] = ind.location[d]
-
-    return coordinates
-
-#-------------------------------------------------------------------------------------------
-
-def splitInt16(int16):
-    '''
-    Author: Jared Galloway
-    Take in a 16 bit integer, and return the top and bottom 8 bit integers
-
-    Maybe not the most effecient? My best attempt based on my knowledge of python
-    '''
-    int16 = np.uint16(int16)
-    bits = np.binary_repr(int16, 16)
-    top = int(bits[:8], 2)
-    bot = int(bits[8:], 2)
-    return np.uint8(top), np.uint8(bot)
-
-#-------------------------------------------------------------------------------------------
-
-def GlueInt8(int8_t, int8_b):
-    '''
-    Author: Jared Galloway
-    Take in 2 8-bit integers, and return the respective 16 bit integer created
-    byt gluing the bit representations together
-
-    Maybe not the most effecient? My best attempt based on my knowledge of python
-    '''
-    int8_t = np.uint8(int8_t)
-    int8_b = np.uint8(int8_b)
-    bits_a = np.binary_repr(int8_t, 8)
-    bits_b = np.binary_repr(int8_b, 8)
-    ret = int(bits_a + bits_b, 2)
-    return np.uint16(ret)
-
-#-------------------------------------------------------------------------------------------
-
-def weighted_trees(ts, sample_weight_list, node_fun=sum):
-    '''
-    Author: Jared Galloway
-    Here ``sample_weight_list`` is a list of lists of weights, each of the same
-    length as the samples in the tree sequence ``ts``. This returns an iterator
-    over the trees in ``ts`` that is identical to ``ts.trees()`` except that
-    each tree ``t`` has the additional method `t.node_weights()` which returns
-    an iterator over the "weights" for each node in the tree, in the same order
-    as ``t.nodes()``.
-
-    Each node has one weight, computed separately for each set of weights in
-    ``sample_weight_list``. Each such weight is defined for a particular list
-    of ``sample_weights`` recursively:
-
-    1. First define ``all_weights[ts.samples()[j]] = sample_weights[j]``
-        and ``all_weights[k] = 0`` otherwise.
-    2. The weight for a node ``j`` with children ``u1, u2, ..., un`` is
-        ``node_fun([all_weights[j], weight[u1], ..., weight[un]])``.
-
-    For instance, if ``sample_weights`` is a vector of all ``1``s, and
-    ``node_fun`` is ``sum``, then the weight for each node in each tree
-    is the number of samples below it, equivalent to ``t.num_samples(j)``.
-
-    To do this, we need to only recurse upwards from the parent of each
-    added or removed edge, updating the weights.
-    '''
-    samples = ts.samples()
-    num_weights = len(sample_weight_list)
-    # make sure the provided initial weights lists match the number of samples
-    for swl in sample_weight_list:
-        assert(len(swl) == len(samples))
-
-    # initialize the weights
-    base_X = [[0.0 for _ in range(num_weights)] for _ in range(ts.num_nodes)]
-    X = [[0.0 for _ in range(num_weights)] for _ in range(ts.num_nodes)]
-    # print(samples)
-    for j, u in enumerate(samples):
-        for k in range(num_weights):
-            X[u][k] = sample_weight_list[k][j]
-            base_X[u][k] = sample_weight_list[k][j]
-
-    z = zip(ts.trees(tracked_samples=ts.samples()), ts.edge_diffs())
-    for t, (interval, records_out, records_in) in z:
-        for edge in itertools.chain(records_out, records_in):
-            u = edge.parent
-            while u != msprime.NULL_NODE:
-                for k in range(num_weights):
-                    U = None
-                    if(t.is_sample(u)):
-                        U = [base_X[u][k]] + [X[u][k] for u in t.children(u)]
-                    else:
-                        U = [X[u][k] for u in t.children(u)]
-                    X[u][k] = node_fun(U)
-                u = t.parent(u)
-
-        def the_node_weights(self):
-            for u in self.nodes():
-                yield X[u]
-
-        # magic that uses "descriptor protocol"
-        t.node_weights = the_node_weights.__get__(t, msprime.SparseTree)
-        # t.node_weights = the_node_weights(t)
-        yield t
-
 #-------------------------------------------------------------------------------------------
 
 def progress_bar(percent, barLen = 50):
@@ -165,7 +47,7 @@ def create_procs(nProcs, task_q, result_q, params, worker):
 
 #-------------------------------------------------------------------------------------------
 
-def mae(x,y):
+def get_mae(x,y):
     '''
     Compute mean absolute error between predictions and targets
 
@@ -180,7 +62,7 @@ def mae(x,y):
 
 #-------------------------------------------------------------------------------------------
 
-def mse(x,y):
+def get_mse(x,y):
     '''
     Compute mean squared error between predictions and targets
 
@@ -198,6 +80,7 @@ def mse(x,y):
 
 def train_model(ModelFuncPointer,
             ModelName,
+            targetLabels,
             TrainGenerator,
             ValidationGenerator,
             TestGenerator,
@@ -219,11 +102,6 @@ def train_model(ModelFuncPointer,
     Session(config=config)
 
     x,y = TrainGenerator.__getitem__(0)
-    #print(x)
-    #print("x.shape:",x.shape)
-    #print(y)
-    #print("y.shape:",y.shape)
-    #sys.exit()
 
     # early stopping and saving the best weights
     callbacks_list = [
@@ -231,7 +109,7 @@ def train_model(ModelFuncPointer,
                 monitor='val_loss',
                 verbose=1,
                 min_delta=0.01,
-                patience=20),
+                patience=10),
             ModelCheckpoint(
                 filepath=network[1],
                 monitor='val_loss',
@@ -285,6 +163,7 @@ def train_model(ModelFuncPointer,
     history.history['predictions'] = np.array(predictions)
     history.history['Y_test'] = np.array(y)
     history.history['name'] = ModelName
+    history.history['target_labels'] = targetLabels
     print("results written to: ",resultsFile)
     pickle.dump(history.history, open( resultsFile, "wb" ))
 
@@ -303,73 +182,52 @@ def plotResults(resultsFile,saveas):
     '''
 
     plt.rc('font', family='serif', serif='Times')
-    plt.rc('xtick', labelsize=6)
-    plt.rc('ytick', labelsize=6)
-    plt.rc('axes', labelsize=6)
+    plt.rc('xtick', labelsize=12)
+    plt.rc('ytick', labelsize=12)
+    plt.rc('axes', labelsize=12)
 
     results = pickle.load(open( resultsFile , "rb" ))
 
-    fig,axes = plt.subplots(3,1)
+    target_labels = results["target_labels"]
+    nTargets = len(target_labels)
+
+    fig,axes = plt.subplots(nTargets+1,1)
     plt.subplots_adjust(hspace=0.9)
 
-    ##mu
-    predictions = np.array([float(Y[0]) for Y in results["predictions"]])
-    realValues = np.array([float(X[0]) for X in results["Y_test"]])
+    for i in range(nTargets):
+        predictions = np.array([float(Y[i]) for Y in results["predictions"]])
+        realValues = np.array([float(X[i]) for X in results["Y_test"]])
 
-    r_2 = round((np.corrcoef(predictions,realValues)[0,1])**2,5)
+        r_2 = round((np.corrcoef(predictions,realValues)[0,1])**2,5)
 
-    mae_0 = round(mae(realValues,predictions),4)
-    mse_0 = round(mse(realValues,predictions),4)
-    labels = "$R^{2} = $"+str(r_2)+"\n"+"$mae = $" + str(mae_0)+" | "+"$mse = $" + str(mse_0)
+        mae = round(get_mae(realValues,predictions),4)
+        mse = round(get_mse(realValues,predictions),4)
+        labels = "$R^{2} = $"+str(r_2)+"\n"+"$mae = $" + str(mae)+" | "+"$mse = $" + str(mse)
 
-    axes[0].scatter(realValues,predictions,marker = "o", color = 'tab:purple',s=5.0,alpha=0.6)
+        axes[i].scatter(realValues,predictions,marker = "o", color = 'tab:red',s=5.0,alpha=0.5)
 
-    lims = [
-        np.min([axes[0].get_xlim(), axes[0].get_ylim()]),  # min of both axes
-        np.max([axes[0].get_xlim(), axes[0].get_ylim()]),  # max of both axes
-    ]
-    axes[0].set_xlim(lims)
-    axes[0].set_ylim(lims)
-    axes[0].plot(lims, lims, 'k-', alpha=0.75, zorder=0)
-    axes[0].set_title(results["name"]+"\n"+labels,fontsize=6)
+        lims = [
+            np.min([axes[i].get_xlim(), axes[i].get_ylim()]),
+            np.max([axes[i].get_xlim(), axes[i].get_ylim()]),
+        ]
+        axes[i].set_xlim(lims)
+        axes[i].set_ylim(lims)
+        axes[i].plot(lims, lims, 'k-', alpha=0.75, zorder=0)
+        axes[i].set_title(results["name"]+"\n"+labels,fontsize=12)
 
-    ##rho
-    predictions = np.array([float(Y[1]) for Y in results["predictions"]])
-    realValues = np.array([float(X[1]) for X in results["Y_test"]])
+    axes[nTargets].plot(results["loss"],label = "mae loss",color='tab:grey')
+    axes[nTargets].plot(results["val_loss"], label= "mae validation loss",color='tab:red')
+    axes[nTargets].legend(frameon = False,fontsize = 12)
+    axes[nTargets].set_ylabel("mse")
+    axes[nTargets].set_xlabel("training epoch")
 
-    r_2 = round((np.corrcoef(predictions,realValues)[0,1])**2,5)
+    for i, target in enumerate(target_labels):
+        axes[i].set_ylabel("{} [{} predictions]".format(target,len(predictions)))
+        axes[i].set_xlabel("{} [{} true values]".format(target,len(realValues)))
+        axes[i].grid()
 
-    mae_0 = round(mae(realValues,predictions),4)
-    mse_0 = round(mse(realValues,predictions),4)
-    labels = "$R^{2} = $"+str(r_2)+"\n"+"$mae = $" + str(mae_0)+" | "+"$mse = $" + str(mse_0)
-
-    axes[1].scatter(realValues,predictions,marker = "o", color = 'tab:purple',s=5.0,alpha=0.6)
-
-    lims = [
-        np.min([axes[1].get_xlim(), axes[1].get_ylim()]),  # min of both axes
-        np.max([axes[1].get_xlim(), axes[1].get_ylim()]),  # max of both axes
-    ]
-    axes[1].set_xlim(lims)
-    axes[1].set_ylim(lims)
-    axes[1].plot(lims, lims, 'k-', alpha=0.75, zorder=0)
-    axes[1].set_title(results["name"]+"\n"+labels,fontsize=6)
-
-    axes[2].plot(results["loss"],label = "mae loss",color='tab:cyan')
-    axes[2].plot(results["val_loss"], label= "mae validation loss",color='tab:pink')
-
-    axes[2].legend(frameon = False,fontsize = 6)
-    axes[2].set_ylabel("mse")
-
-    axes[0].set_ylabel(str(len(predictions))+" mu predictions")
-    axes[0].set_xlabel(str(len(realValues))+" mu real values")
-    axes[1].set_ylabel(str(len(predictions))+" rho predictions")
-    axes[1].set_xlabel(str(len(realValues))+" rho real values")
-    fig.subplots_adjust(left=.15, bottom=.16, right=.85, top=.92,hspace = 0.5,wspace=0.4)
-    height = 12.00
-    width = 6.00
-
-    axes[0].grid()
-    axes[1].grid()
+    width = 5.50
+    height = (nTargets * 4.0) + 4.0
     fig.set_size_inches(width,height)
     fig.savefig(saveas)
 

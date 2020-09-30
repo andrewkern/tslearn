@@ -49,7 +49,6 @@ class Simulator(object):
         self.rho = None
         self.hotWin = None
         self.mu = None
-        self.segSites = None
 
 
     def runOneMsprimeSim(self,simNum,direc):
@@ -91,7 +90,8 @@ class Simulator(object):
         ts.dump(tsFileName)
 
         # Return number of sites
-        return ts.num_sites
+
+        return [ts.num_nodes, ts.num_edges, ts.num_sites, ts.num_mutations]
 
 
     def simulateAndProduceTrees(self,direc,numReps,simulator,nProc=1):
@@ -100,6 +100,7 @@ class Simulator(object):
 
         (str,str) -> None
         '''
+        self.numReps = numReps
         self.seed=np.repeat(self.seed,numReps)
         self.rho=np.empty(numReps)
         for i in range(numReps):
@@ -138,19 +139,29 @@ class Simulator(object):
             print("KeyboardInterrupt")
             sys.exit(0)
 
-        self.segSites=np.empty(numReps,dtype="int64")
+        self.numNodes=np.empty(numReps,dtype="int64")
+        self.numEdges=np.empty(numReps,dtype="int64")
+        self.numSites=np.empty(numReps,dtype="int64")
+        self.numMutations=np.empty(numReps,dtype="int64")
         for i in range(result_q.qsize()):
             item = result_q.get()
-            self.segSites[item[0]]=item[1]
+            self.numNodes[item[0]]=item[1][0]
+            self.numEdges[item[0]]=item[1][1]
+            self.numSites[item[0]]=item[1][2]
+            self.numMutations[item[0]]=item[1][3]
 
-        self.__dict__["numReps"] = numReps
         infofile = open(os.path.join(direc,"info.p"),"wb")
         pickle.dump(self.__dict__,infofile)
         infofile.close()
 
         for p in pids:
             p.terminate()
-        return None
+
+        return np.array([self.numNodes.max(),
+            self.numEdges.max(),
+            self.numSites.max(),
+            self.numMutations.max()]
+            )
 
 
     def worker_simulate(self, task_q, result_q, params):

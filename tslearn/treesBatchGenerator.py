@@ -3,7 +3,7 @@ Authors: Jared Galloway, Jeff Adrion
 '''
 
 from tslearn.imports import *
-from tslearn.tsEncoder import *
+from tslearn.encoder import *
 
 class treesBatchGenerator(tf.keras.utils.Sequence):
 
@@ -31,22 +31,24 @@ class treesBatchGenerator(tf.keras.utils.Sequence):
             treesDirectory,
             targetNormalization = 'zscore',
             batchSize=64,
-            maxLen=None,
             frameWidth=0,
             center=False,
-            shuffleExamples = False
+            shuffleExamples = False,
+            maxTsTableSize = None,
+            numReps = None,
+            rawTargets = None
             ):
 
         self.treesDirectory = treesDirectory
         self.targetNormalization = targetNormalization
         self.batch_size = batchSize
-        self.maxLen = maxLen
         self.frameWidth = frameWidth
         self.center = center
-        infoFilename = os.path.join(self.treesDirectory,"info.p")
-        self.infoDir = pickle.load(open(infoFilename,"rb"))
-        self.indices = np.arange(self.infoDir["numReps"])
         self.shuffleExamples = shuffleExamples
+        self.maxTsTableSize = maxTsTableSize
+        self.numReps = numReps
+        self.indices = np.arange(numReps)
+        self.rawTargets = rawTargets
 
 
         if(targetNormalization != None):
@@ -56,51 +58,55 @@ class treesBatchGenerator(tf.keras.utils.Sequence):
             np.random.shuffle(self.indices)
 
 
-    def pad_encodings(self, trees, maxHeight=None, frameWidth=0, center=False):
+    def pad_encodings(self, encodings, maxTsTableSize=None, frameWidth=0, center=False):
+        """
+        pads all encodings to the max size of the tree sequence tables
+        maxTsTableSize corresponds to the max lengths of of the
+        [nodes, edges, sites, and mutations] table
+        """
 
+        maxHeight = int(maxTsTableSize[2])
+        maxWidth = int(maxTsTableSize[0])
         pad_val = 0.0
-        for i in range(len(trees)):
-            height = trees[i].shape[0]
-            paddingLen = maxHeight - height
+        for i in range(len(encodings)):
+            height = encodings[i].shape[0]
+            width = encodings[i].shape[1]
+            paddingHeight = maxHeight - height
+            paddingWidth = maxWidth - width
             if(center):
-                prior = paddingLen // 2
-                post = paddingLen - prior
-                trees[i] = np.pad(trees[i],((prior,post),(0,0),(0,0)),"constant",constant_values=pad_val)
+                priorH = paddingHeight // 2
+                postH = paddingHeight - priorH
+                priorW = paddingWidth // 2
+                postW = paddingWidth - priorW
+                encodings[i] = np.pad(encodings[i],((priorH,postH),(priorW,postW),(0,0)),"constant",constant_values=pad_val)
             else:
-                if(paddingLen < 0):
-                    trees[i] = np.pad(trees[i],((0,0),(0,0),(0,0)),"constant",constant_values=pad_val)[:paddingLen]
-                else:
-                    trees[i] = np.pad(trees[i],((0,paddingLen),(0,0),(0,0)),"constant",constant_values=pad_val)
-
-        trees = np.array(trees)
+                print("Error: currently center must be set to True")
+                sys.exit(1)
+        encodings = np.array(encodings)
 
         if(frameWidth):
             fw = frameWidth
-            trees = np.pad(trees,((0,0),(fw,fw),(fw,fw),(fw,fw)),"constant",constant_values=pad_val)
+            encodings = np.pad(encodings,((0,0),(fw,fw),(fw,fw),(fw,fw)),"constant",constant_values=pad_val)
 
-        return trees
+        return encodings
 
 
     def normalizeTargets(self):
-
+        """
+        normalize and stack all targets in the rawTargets list
+        """
         norm = self.targetNormalization
-        nTargets_mu = copy.deepcopy(self.infoDir['mu'])
-        nTargets_rho = copy.deepcopy(self.infoDir['rho'])
 
+        nTargets = []
         if(norm == 'zscore'):
-            #mu
-            tar_mean_mu = np.mean(nTargets_mu,axis=0)
-            tar_sd_mu = np.std(nTargets_mu,axis=0)
-            nTargets_mu -= tar_mean_mu
-            nTargets_mu = np.divide(nTargets_mu,tar_sd_mu,out=np.zeros_like(nTargets_mu),where=tar_sd_mu!=0)
-            #rho
-            tar_mean_rho = np.mean(nTargets_rho,axis=0)
-            tar_sd_rho = np.std(nTargets_rho,axis=0)
-            nTargets_rho -= tar_mean_rho
-            nTargets_rho = np.divide(nTargets_rho,tar_sd_rho,out=np.zeros_like(nTargets_rho),where=tar_sd_rho!=0)
-
-        ## stack targets
-        nTargets = np.stack((nTargets_mu, nTargets_rho), axis=-1)
+            for i in range(len(self.rawTargets)):
+                targets = copy.deepcopy(self.rawTargets[i])
+                tar_mean = np.mean(targets, axis=0)
+                tar_sd = np.std(targets, axis=0)
+                targets -= tar_mean
+                targets = np.divide(targets, tar_sd, out=np.zeros_like(targets), where=tar_sd != 0)
+                nTargets.append(targets)
+        nTargets = np.stack(nTargets, axis=-1)
 
         return nTargets
 
@@ -112,8 +118,7 @@ class treesBatchGenerator(tf.keras.utils.Sequence):
 
 
     def __len__(self):
-
-        return int(np.floor(self.infoDir["numReps"]/self.batch_size))
+        return int(np.floor(self.numReps/self.batch_size))
 
 
     def __getitem__(self, idx):
@@ -125,21 +130,17 @@ class treesBatchGenerator(tf.keras.utils.Sequence):
 
     def __data_generation(self, batchTreeIndices):
 
-        encodings = []
-        max_height = 0
+        targets = np.array([t for t in self.normalizedTargets[batchTreeIndices]])
 
+        encodings = []
         for treeIndex in batchTreeIndices:
             tsFilePath = os.path.join(self.treesDirectory,"{}.trees".format(treeIndex))
             ts = tskit.load(tsFilePath)
-            encoder = TsEncoder(ts)
-            encoder.add_one_to_one()
-            encoder.normalize_layers(layers=[0])
-            encoding = encoder.get_encoding(dtype='float')
-            max_height = max(max_height, encoding.shape[0])
+            tsTensor = Encoder(ts)
+            tsTensor.add_mutation_matrix()
+            encoding = tsTensor.get_encoding(dtype="float")
             encodings.append(encoding)
 
-        respectiveNormalizedTargets = [t for t in self.normalizedTargets[batchTreeIndices]]
-        targets = np.array(respectiveNormalizedTargets)
-        encodings = self.pad_encodings(encodings, maxHeight = max_height, frameWidth=self.frameWidth, center=self.center)
+        encodings = self.pad_encodings(encodings, maxTsTableSize = self.maxTsTableSize, frameWidth=self.frameWidth, center=self.center)
 
         return encodings, targets
