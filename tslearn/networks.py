@@ -391,7 +391,7 @@ def GRU4A(x,y):
     return model
 
 
-def RELERNN_GRU(x,y):
+def RELERNN(x,y):
     '''
     Same GPU used in ReLERNN
     '''

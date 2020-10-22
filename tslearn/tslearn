@@ -75,7 +75,7 @@ def main():
     
     ##########################SIMULATE##########################
     # define params for 3-epoch model
-    if args.netArch == "ReLERNN_GRU":
+    if args.netArch == "ReLERNN":
         ReLERNN = True
     else:
         ReLERNN = False
@@ -165,7 +165,7 @@ def main():
     resultsFig = os.path.join(cwd,"results","results.pdf")
 
     netArchs = {
-            "ReLERNN_GRU" : RELERNN_GRU,
+            "ReLERNN" : RELERNN,
             "LSTM4C" : LSTM4C
             }
     
