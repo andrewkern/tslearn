@@ -13,12 +13,28 @@ from tslearn.treesBatchGenerator import *
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--outDir',dest='outDir',help='Directory for all output',default=None)
+    parser.add_argument("--nExamples",dest="nExamples",
+            help="list [num_training_examples,num_validation_examples, num_test_examples]",type=str,default="64,64,64")
+    parser.add_argument("--nSamples",dest="nSamples",help="number of samples to simulate",type=int,default=10)
+    parser.add_argument("--chromLen",dest="chromLen",help="length of the chromsome to simulate",type=int,default=1e3)
+    parser.add_argument("--Ne",dest="Ne",help="N for calculating metrics in 4N gens",type=int,default=1e4)
+    parser.add_argument("--mrPrior",dest="mrPrior",help="mutation rate bounds [low,high]",type=str,default="1e-8,1e-6")
+    parser.add_argument("--rrPrior",dest="rrPrior",help="recombination rate bounds [low,high]",
+            type=str,default="0.00,1e-6")
+    parser.add_argument("--epochNePrior",dest="epochNePrior",help="pop size bounds for the epochs [low,high]",
+            type=str,default="1000,10000")
+    parser.add_argument("--t1Prior",dest="t1Prior",help="t1 bounds [low,high]",type=str,default="0.02,0.04")
+    parser.add_argument("--t2Prior",dest="t2Prior",help="t2 bounds [low,high]",type=str,default="0.2,0.4")
     parser.add_argument('--nEpochs',dest='nEpochs',
-            help='Maximum number of epochs to train (EarlyStopping is implemented for validation accuracy)', type=int, default=100)
-    parser.add_argument('--nValSteps',dest='nValSteps',help='Number of validation steps', type=int, default=20)
+            help='Maximum number of epochs to train (EarlyStopping is implemented for validation accuracy)', 
+            type=int, default=5000)
+    parser.add_argument('--netArch',dest='netArch',help='network architecture to use', type=str, default="LSTM4C")
     parser.add_argument('--gpuID',dest='gpuID',help='Identifier specifying which GPU to use', type=int, default=0)
     parser.add_argument("--seed",dest="seed",help="random seed",type=int,default=12345)
-    parser.add_argument("--nProc",dest="nProc",help="number of cores to use (default uses all available)",type=int,default=None)
+    parser.add_argument("--ReLERNN",dest="ReLERNN",
+            help="use ReLERNN stlye training (genotype matrices/ReLERNN network)",default=False, action='store_true')
+    parser.add_argument("--nProc",dest="nProc",help="number of cores to use (default uses all available)",
+            type=int,default=None)
     args = parser.parse_args()
 
     # set seed
@@ -58,22 +74,35 @@ def main():
 
     
     ##########################SIMULATE##########################
-    # define params for data generation
+    # define params for 3-epoch model
+    if args.netArch == "ReLERNN_GRU":
+        ReLERNN = True
+    else:
+        ReLERNN = False
+    
+    # assign simulation parameters
+    numReps = [int(x) for x in args.nExamples.split(",")]
+    mrPrior = [float(x) for x in args.mrPrior.split(",")]
+    rrPrior = [float(x) for x in args.rrPrior.split(",")]
+    epochNePrior = [int(x) for x in args.epochNePrior.split(",")]
+    t1Prior = [float(x) for x in args.t1Prior.split(",")]
+    t2Prior = [float(x) for x in args.t2Prior.split(",")]
+
     dg_params = {
         'seed':args.seed,
-        'N': 10,
-        'Ne':10000,
-        'priorLowsRho':0.0,
-        'priorHighsRho':1e-6,
-        'priorLowsMu':1e-8,
-        'priorHighsMu':1e-7,
-        'ChromosomeLength':1e3
+        'N':args.nSamples,
+        'Ne':args.Ne,
+        'mrPrior':mrPrior,
+        'rrPrior':rrPrior,
+        'chromLength':args.chromLen,
+        'epoch_N':epochNePrior,
+        'epoch_t1':t1Prior,
+        'epoch_t2':t2Prior,
+        'ReLERNN':ReLERNN
               }
     
-    max_table_size = np.zeros(4) # corresponds to [max_num_nodes, edges, sites, mutations]
-    numReps = [20000,2000,1000]
-
     # simulate and produce trees
+    max_table_size = np.zeros(5) #[max_nodes, max_edges, max_sites, max_mutations, max_trees]
     for i, subset in enumerate(sets):
         data_generator = Simulator(**dg_params)
         direc = os.path.join(treeDir,subset)
@@ -89,13 +118,21 @@ def main():
         'frameWidth': 0,
         'center':True,
         'shuffleExamples':True,
-        'maxTsTableSize':max_table_size
+        'maxTsTableSize':max_table_size,
+        'ReLERNN':ReLERNN
               }
     vali_batch_params = copy.deepcopy(train_batch_params)
     test_batch_params = copy.deepcopy(train_batch_params)
     
     # define set-specific parameters
-    targets = ["mu","rho"]
+    targets = [
+            "mu",
+            "rho",
+            "epoch_N_modern",
+            "epoch_N_intermediate",
+            "epoch_N_ancestral"
+            ]
+    
     params = [train_batch_params, vali_batch_params, test_batch_params]
     for i, subset in enumerate(sets):
         # universal params    
@@ -127,9 +164,13 @@ def main():
     resultsFile = os.path.join(cwd,"results","model.results")
     resultsFig = os.path.join(cwd,"results","results.pdf")
 
-    # train model
-    train_model(ModelFuncPointer=DENSE1,
-            ModelName="DENSE1",
+    netArchs = {
+            "ReLERNN_GRU" : RELERNN_GRU,
+            "LSTM4C" : LSTM4C
+            }
+    
+    train_model(ModelFuncPointer=netArchs[args.netArch],
+            ModelName=args.netArch,
             targetLabels=targets,
             TrainGenerator=train_batch_gen,
             ValidationGenerator=vali_batch_gen,
@@ -137,11 +178,9 @@ def main():
             resultsFile=resultsFile,
             network=[modelFile,weightsFile],
             numEpochs=args.nEpochs,
-            validationSteps=args.nValSteps,
             nProc=1,
             gpuID=args.gpuID)
     
-    ## plot the results
     plotResults(resultsFile=resultsFile,saveas=resultsFig)
 
 
