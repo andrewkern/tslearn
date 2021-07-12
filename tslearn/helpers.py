@@ -4,6 +4,33 @@ Authors: Jeff Adrion, Jared Galloway
 
 from tslearn.imports import *
 
+def splitInt16(int16):
+    '''
+    Take in a 16 bit integer, and return the top and bottom 8 bit integers
+
+    Maybe not the most effecient? My best attempt based on my knowledge of python
+    '''
+    int16 = np.uint16(int16)
+    bits = np.binary_repr(int16, 16)
+    top = int(bits[:8], 2)
+    bot = int(bits[8:], 2)
+    return np.uint8(top), np.uint8(bot)
+
+
+def GlueInt8(int8_t, int8_b):
+    '''
+    Take in 2 8-bit integers, and return the respective 16 bit integer created
+    byt gluing the bit representations together
+
+    Maybe not the most effecient? My best attempt based on my knowledge of python
+    '''
+    int8_t = np.uint8(int8_t)
+    int8_b = np.uint8(int8_b)
+    bits_a = np.binary_repr(int8_t, 8)
+    bits_b = np.binary_repr(int8_b, 8)
+    ret = int(bits_a + bits_b, 2)
+    return np.uint16(ret)
+
 #-------------------------------------------------------------------------------------------
 
 def progress_bar(percent, barLen = 50):
@@ -119,7 +146,6 @@ def train_model(ModelFuncPointer,
     model = ModelFuncPointer(x,y)
     if nProc > 1:
         history = model.fit(TrainGenerator,
-            steps_per_epoch=epochSteps,
             epochs=numEpochs,
             validation_data=ValidationGenerator,
             callbacks=callbacks_list,
@@ -128,7 +154,6 @@ def train_model(ModelFuncPointer,
             workers=nProc)
     else:
         history = model.fit(TrainGenerator,
-            steps_per_epoch=epochSteps,
             epochs=numEpochs,
             validation_data=ValidationGenerator,
             callbacks=callbacks_list,
@@ -166,7 +191,7 @@ def train_model(ModelFuncPointer,
     print("results written to: ",resultsFile)
     pickle.dump(history.history, open( resultsFile, "wb" ))
 
-    return None
+    return history
 
 #-------------------------------------------------------------------------------------------
 

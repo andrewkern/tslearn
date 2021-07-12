@@ -145,6 +145,54 @@ def DENSE4B(x,y):
     return model
 
 
+def DENSE4_class(x,y):
+    '''
+    '''
+    inputs0 = layers.Input(shape=(x[0].shape[1:]))
+    model0 = layers.Flatten()(inputs0)
+    #model0 = layers.BatchNormalization()(model0)
+    model0 = layers.Dense(16, activation='relu')(model0)
+    #model0 = layers.Dropout(0.35)(model0)
+
+    inputs1 = layers.Input(shape=(x[1].shape[1:]))
+    #model1 = layers.Bidirectional(layers.GRU(84,return_sequences=False))(inputs1)
+    model1 = layers.Flatten()(inputs1)
+    #model1 = layers.BatchNormalization()(model1)
+    model1 = layers.Dense(16, activation='relu')(model1)
+    #model1 = layers.Dropout(0.35)(model1)
+
+
+    inputs2 = layers.Input(shape=(x[2].shape[1:]))
+    model2 = layers.Flatten()(inputs2)
+    #model2 = layers.BatchNormalization()(inputs2)
+    model2 = layers.Dense(16, activation='relu')(model2)
+    #model2 = layers.Dropout(0.35)(model2)
+
+    #inputs3 = layers.Input(shape=(x[3].shape[1:]))
+    inputs3 = layers.Input(shape=(x[3].shape[1:]))
+    model3 = layers.Flatten()(inputs3)
+    model3 = layers.Dense(64)(model3)
+    #model3 = layers.BatchNormalization()(model3)
+    #model3 = layers.Dropout(0.35)(model3)
+
+
+    model = layers.concatenate([model0,model1,model2,model3])
+    #model = layers.concatenate([model1,model3])
+    model = layers.Dense(16, activation='relu')(model)
+    model = layers.Dense(16, activation='relu')(model)
+    #model = layers.Dropout(0.35)(model)
+    #model = layers.Dense(y.shape[1])(model)
+    output = layers.Dense(y.shape[1], activation='softmax')(model)
+
+    #----------------------------------------------------
+
+    model = Model(inputs=[inputs0,inputs1,
+        inputs2, inputs3], outputs=[output])
+    model.compile(optimizer='Adam', loss='binary_crossentropy',
+                  metrics=['acc'])
+    model.summary()
+
+    return model
 def LSTM4A(x,y):
     '''
     '''
@@ -288,6 +336,55 @@ def LSTM4C(x,y):
 
     return model
 
+def LSTM4C_class(x,y):
+    '''
+    classifier version of above
+    '''
+    inputs0 = layers.Input(shape=(x[0].shape[1:]))
+    model0 = layers.LSTM(64)(inputs0)
+    #model0 = layers.BatchNormalization()(model0)
+    model0 = layers.Dense(128, activation='relu')(model0)
+    model0 = layers.Dropout(0.35)(model0)
+
+    inputs1 = layers.Input(shape=(x[1].shape[1:]))
+    #model1 = layers.Bidirectional(layers.GRU(84))(inputs1)
+    model1 = layers.LSTM(64)(inputs1)
+    #model1 = layers.BatchNormalization()(model1)
+    model1 = layers.Dense(128, activation='relu')(model1)
+    model1 = layers.Dropout(0.35)(model1)
+
+
+    inputs2 = layers.Input(shape=(x[2].shape[1:]))
+    model2 = layers.LSTM(64)(inputs2)
+    #model2 = layers.BatchNormalization()(inputs2)
+    model2 = layers.Dense(128, activation='relu')(model2)
+    model2 = layers.Dropout(0.35)(model2)
+
+    inputs3 = layers.Input(shape=(x[3].shape[1:]))
+    #model3 = layers.Bidirectional(layers.GRU(84))(inputs3)
+    model3 = layers.LSTM(64)(inputs3)
+    #model3 = layers.BatchNormalization()(model3)
+    model3 = layers.Dense(128, activation='relu')(model3)
+    model3 = layers.Dropout(0.35)(model3)
+
+
+    #model = layers.concatenate([model0,model1,model2,model3])
+    model = layers.concatenate([model0,model1,model2,model3])
+    model = layers.Dense(256, activation='relu')(model)
+    model = layers.Dropout(0.35)(model)
+    output = layers.Dense(y.shape[1], activation='softmax')(model)
+
+    #----------------------------------------------------
+
+    model = Model(inputs=[inputs0,inputs1,
+        inputs2, inputs3], outputs=[output])
+    model.compile(optimizer='Adam',
+                  loss="binary_crossentropy",
+                  metrics=['acc'])
+    model.summary()
+
+    return model
+
 
 def LSTM4D(x,y):
     '''
@@ -427,3 +524,26 @@ def RELERNN(x,y):
     model.summary()
 
     return model
+
+def CNN2D(x,y):
+    """
+    CNN model for the tsencode tensor
+    """
+
+    img_1_inputs = layers.Input(shape=(x[0].shape))
+
+    h = layers.Conv2D(64, kernel_size=(4,4), activation='relu', name='conv1_1')(img_1_inputs)
+    #h = layers.Conv1D(256, kernel_size=2, dilation_rate=1, activation='relu')(h)
+    h = layers.AveragePooling2D(pool_size=2)(h)
+    h = layers.Dropout(0.25)(h)
+    h = layers.Flatten()(h)
+    h = layers.Dense(32)(h)
+    h = layers.Dropout(0.25)(h)
+    output = layers.Dense(1,kernel_initializer='normal',name="out",activation='sigmoid')(h)
+
+    model = Model(inputs=[img_1_inputs], outputs=[output])
+    model.compile(loss='binary_crossentropy', metrics=['acc'], optimizer='adam')
+    model.summary()
+
+    return model
+

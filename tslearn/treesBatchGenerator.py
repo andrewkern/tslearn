@@ -29,7 +29,7 @@ class treesBatchGenerator(tf.keras.utils.Sequence):
     #in addition to the .trees directory containing the data from which to generate the batches
     def __init__(self,
             treesDirectory,
-            targetNormalization = 'zscore',
+            targetNormalization = 'binary',
             batchSize=64,
             frameWidth=0,
             center=False,
@@ -53,10 +53,8 @@ class treesBatchGenerator(tf.keras.utils.Sequence):
         infoFilename = os.path.join(self.treesDirectory,"info.p")
         self.infoDir = pickle.load(open(infoFilename,"rb"))
         self.ReLERNN = ReLERNN
-
         if(targetNormalization != None):
             self.normalizedTargets = self.normalizeTargets()
-
         if(shuffleExamples):
             np.random.shuffle(self.indices)
 
@@ -422,8 +420,11 @@ class treesBatchGenerator(tf.keras.utils.Sequence):
                 targets -= tar_mean
                 targets = np.divide(targets, tar_sd, out=np.zeros_like(targets), where=tar_sd != 0)
                 nTargets.append(targets)
+        elif(norm == 'binary'):
+            for i in range(len(self.rawTargets)):
+                targets = copy.deepcopy(self.rawTargets[i])
+                nTargets.append(np.where(targets > 0, 1, targets))
         nTargets = np.stack(nTargets, axis=-1)
-
         return nTargets
 
 
@@ -455,15 +456,16 @@ class treesBatchGenerator(tf.keras.utils.Sequence):
         for treeIndex in batchTreeIndices:
             tsFilePath = os.path.join(self.treesDirectory,"{}.trees".format(treeIndex))
             ts = tskit.load(tsFilePath)
-            cptdFilePath = os.path.join(self.treesDirectory,"{}.child_parent_treeID_dict".format(treeIndex))
-            cptd = pickle.load(open(cptdFilePath,"rb"))
-            tsTensor = Encoder(ts)
-            tsTensor.add_mutation_matrix()
-            tsTensor.add_edge_matrix(cptd)
-            encoding = tsTensor.get_encoding(dtype="float")
+            #cptdFilePath = os.path.join(self.treesDirectory,"{}.child_parent_treeID_dict".format(treeIndex))
+            #cptd = pickle.load(open(cptdFilePath,"rb"))
+            tsTensor = TsEncoder(ts, width=1000)
+            tsTensor.add_node_time_layer()
+            #tsTensor.add_parent_pointer()
+            #tsTensor.add_branch_length_layer()
+            encoding = tsTensor.get_encoding()
             encodings.append(encoding)
-
-        encodings = self.pad_encodings(encodings, maxTsTableSize = self.maxTsTableSize, frameWidth=self.frameWidth, center=self.center)
+        encodings = np.array(encodings, dtype='float64')
+        #encodings = self.pad_encodings(encodings, maxTsTableSize = self.maxTsTableSize, frameWidth=self.frameWidth, center=self.center)
 
         return encodings, targets
 

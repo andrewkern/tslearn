@@ -229,3 +229,204 @@ class Simulator(object):
                         result_q.put([i,self.runOneMsprimeSim(i,direc)])
             finally:
                 task_q.task_done()
+
+class SimulatorSweep(object):
+    '''
+
+    The simulator class is a framework for running N simulations
+    using Either msprime (coalescent) or SLiM (forward-moving)
+    in parallel using python's multithreading package.
+
+    With Specified parameters, the class Simulator() populates
+    a directory with training, validation, and testing datasets.
+    It stores the the treeSequences resulting from each simulation
+    in a subdirectory respectfully labeled 'i.trees' where i is the
+    i^th simulation.
+
+    Included with each dataset this class produces an info.p
+    in the subdirectory. This uses pickle to store a dictionary
+    containing all the information for each simulation including the random
+    target parameter which will be extracted for training.
+
+    '''
+
+    def __init__(self,
+        seed = None,
+        N = None,
+        Ne = None,
+        mrPrior = None,
+        rrPrior = None,
+        chromLength = None,
+        s = None,
+        ReLERNN = None
+        ):
+
+        self.seed = seed
+        self.N = N
+        self.Ne = Ne
+        self.mrPrior = mrPrior
+        self.rrPrior = rrPrior
+        self.chromLength = chromLength
+        self.s = s
+        self.ReLERNN = ReLERNN
+
+
+    def runOneMsprimeSim(self,simNum,direc):
+        '''
+        run one msprime simulation and put the corresponding treeSequence in treesOutputFilePath
+
+        (str,float,float)->None
+        '''
+
+        MR = self.mu[simNum]
+        RR = self.rho[simNum]
+        SEED = self.seed[simNum]
+
+        if self.sel_coefs[simNum] > 0:
+            # define hard sweep model
+            sweep_model = msprime.SweepGenicSelection(
+                position=self.chromLength / 2,  # middle of chrom
+                start_frequency=1.0 / (2 * self.Ne),
+                end_frequency=1.0 - (1.0 / (2 * self.Ne)),
+                s=self.sel_coefs[simNum],
+                dt=1e-6,
+            )
+            ts = msprime.sim_ancestry(
+                samples=self.N,
+                # random_seed = SEED,
+                sequence_length=self.chromLength,
+                recombination_rate=RR,
+                model=[sweep_model, msprime.StandardCoalescent()],
+            )
+            ts = msprime.sim_mutations(ts, rate=MR)
+        else:
+            ts = msprime.sim_ancestry(
+                samples=self.N,
+                # random_seed = SEED,
+                sequence_length=self.chromLength,
+                recombination_rate=RR,
+            )
+            ts = msprime.sim_mutations(ts, rate=MR)
+
+        # dump trees
+        tsFileName = os.path.join(direc, "{}.trees".format(simNum))
+        ts.dump(tsFileName)
+
+        '''
+        dump dict where child-parent pairs have a value of
+        all treeIDs with the focal branch as a list, [[treeID, tree.span],])
+        '''
+        child_parent_trees = {} #each entry is "child:parent" = [list_of_trees_by_index]
+        for i, tree in enumerate(ts.trees()):
+            for child in tree.parent_dict:
+                pair_key = "{}:{}".format(child,tree.parent_dict[child])
+                try:
+                    child_parent_trees[pair_key].append([i,tree.span])
+                except KeyError:
+                    child_parent_trees[pair_key] = [[i,tree.span]]
+        cptdFileName = os.path.join(direc, "{}.child_parent_treeID_dict".format(simNum))
+        pickle.dump(child_parent_trees, open(cptdFileName,"wb"))
+
+        if self.ReLERNN:
+            H = ts.genotype_matrix()
+            P = np.array([s.position for s in ts.sites()],dtype='float32')
+            Hname = str(simNum) + "_haps.npy"
+            Hpath = os.path.join(direc,Hname)
+            Pname = str(simNum) + "_pos.npy"
+            Ppath = os.path.join(direc,Pname)
+            np.save(Hpath,H)
+            np.save(Ppath,P)
+
+        # Return tree sequence table stats
+        return [ts.num_nodes, ts.num_edges, ts.num_sites, ts.num_mutations, ts.num_trees]
+
+
+    def simulateAndProduceTrees(self,direc,numReps,simulator,nProc=1):
+        '''
+        determine which simulator to use then populate
+
+        (str,str) -> None
+        '''
+        self.numReps = numReps
+        self.seed=np.repeat(self.seed,numReps)
+        self.rho=np.empty(numReps)
+        for i in range(numReps):
+            randomTargetParameter = np.random.uniform(self.rrPrior[0],self.rrPrior[1])
+            self.rho[i] = randomTargetParameter
+
+        self.mu=np.empty(numReps)
+        for i in range(numReps):
+            randomTargetParameter = np.random.uniform(self.mrPrior[0],self.mrPrior[1])
+            self.mu[i] = randomTargetParameter
+
+        if self.s:
+            self.sel_coefs= np.zeros(numReps)
+            h = int(numReps / 2)
+            for i in range(h):
+                randomTargetParameter = np.random.uniform(self.s[0], self.s[1])
+                self.sel_coefs[i] = randomTargetParameter
+        try:
+            assert((simulator=='msprime') | (simulator=='SLiM'))
+        except:
+            print("Sorry, only 'msprime' & 'SLiM' are supported simulators")
+            exit()
+
+        #Pretty straitforward, create the directory passed if it doesn't exits
+        if not os.path.exists(direc):
+            print("directory '",direc,"' does not exist, creating it")
+            os.makedirs(direc)
+
+        # partition data for multiprocessing
+        mpID = range(numReps)
+        task_q = mp.JoinableQueue()
+        result_q = mp.Queue()
+        params=[simulator, direc]
+
+        # do the work
+        print("Simulate...")
+        pids = create_procs(nProc, task_q, result_q, params, self.worker_simulate)
+        assign_task(mpID, task_q, nProc)
+        try:
+            task_q.join()
+        except KeyboardInterrupt:
+            print("KeyboardInterrupt")
+            sys.exit(0)
+
+        self.numNodes=np.empty(numReps,dtype="int64")
+        self.numEdges=np.empty(numReps,dtype="int64")
+        self.numSites=np.empty(numReps,dtype="int64")
+        self.numMutations=np.empty(numReps,dtype="int64")
+        self.numTrees=np.empty(numReps,dtype="int64")
+        for i in range(result_q.qsize()):
+            item = result_q.get()
+            self.numNodes[item[0]]=item[1][0]
+            self.numEdges[item[0]]=item[1][1]
+            self.numSites[item[0]]=item[1][2]
+            self.numMutations[item[0]]=item[1][3]
+            self.numTrees[item[0]]=item[1][4]
+
+        infofile = open(os.path.join(direc,"info.p"),"wb")
+        pickle.dump(self.__dict__,infofile)
+        infofile.close()
+
+        for p in pids:
+            p.terminate()
+
+        return np.array([self.numNodes.max(),
+            self.numEdges.max(),
+            self.numSites.max(),
+            self.numMutations.max(),
+            self.numTrees.max()]
+            )
+
+
+    def worker_simulate(self, task_q, result_q, params):
+        while True:
+            try:
+                mpID, nth_job = task_q.get()
+                #unpack parameters
+                simulator, direc = params
+                for i in mpID:
+                        result_q.put([i,self.runOneMsprimeSim(i,direc)])
+            finally:
+                task_q.task_done()

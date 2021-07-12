@@ -14,7 +14,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--outDir',dest='outDir',help='Directory for all output',default=None)
     parser.add_argument("--nExamples",dest="nExamples",
-            help="list [num_training_examples,num_validation_examples, num_test_examples]",type=str,default="64,64,64")
+            help="list [num_training_examples,num_validation_examples, num_test_examples]",type=str,default="1000,1000,1000")
     parser.add_argument("--nSamples",dest="nSamples",help="number of samples to simulate",type=int,default=10)
     parser.add_argument("--chromLen",dest="chromLen",help="length of the chromsome to simulate",type=int,default=1e3)
     parser.add_argument("--Ne",dest="Ne",help="N for calculating metrics in 4N gens",type=int,default=1e4)
