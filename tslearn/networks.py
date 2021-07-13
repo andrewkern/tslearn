@@ -532,10 +532,15 @@ def CNN2D(x,y):
 
     img_1_inputs = layers.Input(shape=(x[0].shape))
 
-    h = layers.Conv2D(64, kernel_size=(4,4), activation='relu', name='conv1_1')(img_1_inputs)
-    #h = layers.Conv1D(256, kernel_size=2, dilation_rate=1, activation='relu')(h)
+    h = layers.Conv2D(64, kernel_size=(8,8), activation='relu', name='conv1_1')(img_1_inputs)
     h = layers.AveragePooling2D(pool_size=2)(h)
     h = layers.Dropout(0.25)(h)
+    h = layers.Conv2D(128, kernel_size=(4,4), activation='relu',
+                      name='conv1_2')(h)
+    h = layers.AveragePooling2D(pool_size=2)(h)
+    h = layers.Conv2D(256, kernel_size=(2,2), activation='relu',
+                      name='conv1_3')(h)
+    h = layers.AveragePooling2D(pool_size=2)(h)
     h = layers.Flatten()(h)
     h = layers.Dense(32)(h)
     h = layers.Dropout(0.25)(h)

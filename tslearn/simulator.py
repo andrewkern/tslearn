@@ -281,7 +281,7 @@ class SimulatorSweep(object):
         MR = self.mu[simNum]
         RR = self.rho[simNum]
         SEED = self.seed[simNum]
-
+        npop = 1e3
         if self.sel_coefs[simNum] > 0:
             # define hard sweep model
             sweep_model = msprime.SweepGenicSelection(
@@ -296,12 +296,14 @@ class SimulatorSweep(object):
                 # random_seed = SEED,
                 sequence_length=self.chromLength,
                 recombination_rate=RR,
+                population_size=npop,
                 model=[sweep_model, msprime.StandardCoalescent()],
             )
             ts = msprime.sim_mutations(ts, rate=MR)
         else:
             ts = msprime.sim_ancestry(
                 samples=self.N,
+                population_size=npop,
                 # random_seed = SEED,
                 sequence_length=self.chromLength,
                 recombination_rate=RR,

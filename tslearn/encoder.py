@@ -3,7 +3,7 @@ Authors: Jeff Adrion
 '''
 
 from tslearn.imports import *
-
+from tslearn.helpers import *
 
 class Encoder():
     """
@@ -283,8 +283,6 @@ class TsEncoder():
 
     def add_node_time_layer(self):
         """
-        (msprime TreeSequence, numpy dtype) -> None
-
         Add a layer to the Encoding which puts times on each
         node row.
         """
@@ -292,14 +290,12 @@ class TsEncoder():
         self.initialize_layer()
 
         for i, node in enumerate(self.ts.nodes()):
-            self.Encoding[i, 0:self.width, self.layerIndex] = node.time[0]
+            self.Encoding[i, 0:self.width, self.layerIndex] = node.time
 
         return None
 
     def add_parent_pointer(self, split=False):
         """
-        (msprime TreeSequence),bool -> None
-
         by adding adding all edges to the image,
         give each child a pointer to it's parent.
 
@@ -388,6 +384,10 @@ class TsEncoder():
         return the actual encoding of the TreeSequence
         """
 
+        self.add_node_time_layer()
+        self.add_parent_pointer(split=False)
+        self.add_branch_length_layer()
+        # self.normalize_layers(layers=[0,2])
         if dtype is not None:
             return self.Encoding.astype(dtype)
         else:
